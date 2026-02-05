@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dried Lands - Desert Survival</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #d4a574;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+            z-index: 10;
+        }
+        
+        .hud-item {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+        }
+        
+        .hud-bar {
+            width: 200px;
+            height: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid #d4a574;
+            margin-left: 10px;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        
+        .hud-bar-fill {
+            height: 100%;
+            background: linear-gradient(to right, #d4a574, #e8c9a0);
+            transition: width 0.2s;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95);
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            color: #d4a574;
+            border: 3px solid #d4a574;
+        }
+        
+        #gameOver h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        
+        #gameOver p {
+            font-size: 24px;
+            margin: 10px 0;
+        }
+        
+        #gameOver button {
+            margin-top: 20px;
+            padding: 10px 30px;
+            font-size: 18px;
+            background: #d4a574;
+            color: #1a1a1a;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        #gameOver button:hover {
+            background: #e8c9a0;
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: #d4a574;
+            font-size: 14px;
+            text-align: right;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+        }
+        
+        #treasure-found {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 215, 0, 0.95);
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            color: #1a1a1a;
+            border: 3px solid #FFD700;
+        }
+        
+        #treasure-found h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer"></div>
+    
+    <div id="hud">
+        <div class="hud-item">
+            Health: 
+            <div class="hud-bar">
+                <div class="hud-bar-fill" id="healthBar" style="width: 100%"></div>
+            </div>
+        </div>
+        <div class="hud-item">
+            Hunger: 
+            <div class="hud-bar">
+                <div class="hud-bar-fill" id="hungerBar" style="width: 100%"></div>
+            </div>
+        </div>
+        <div class="hud-item">Treasure Found: <span id="treasureCount">0</span></div>
+        <div class="hud-item">Resources: <span id="resourceCount">0</span></div>
+        <div class="hud-item" style="margin-top: 15px; color: #FFD700;">Ammo: <span id="ammoCount">30</span></div>
+        <div class="hud-item" style="color: #ff6b4a;">Gun: <span id="gunStatus">✗ No Gun</span></div>
+    </div>
+    
+    <div id="gameOver">
+        <h1>You Died</h1>
+        <p>Health: <span id="finalHealth">0</span>%</p>
+        <p>Resources Collected: <span id="finalResources">0</span></p>
+        <button onclick="location.reload()">Try Again</button>
+    </div>
+    
+    <div id="treasure-found">
+        <h1>TREASURE FOUND!</h1>
+        <p>You've discovered desert treasure!</p>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+    
+    <div id="controls">
+        <div><strong>DRIED LANDS</strong></div>
+        <div style="margin-top: 10px;">Arrow Keys / WASD - Move</div>
+        <div>Click - Fire Gun (if equipped)</div>
+        <div style="margin-top: 10px; font-size: 12px;">Find buildings for guns & ammo!</div>
+        <div style="font-size: 12px;">Kill enemies to get ammo!</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
