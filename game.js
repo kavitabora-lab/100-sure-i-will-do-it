@@ -6,6 +6,7 @@ let resources = [];
 let treasures = [];
 let buildings = [];
 let bullets = [];
+let enemies = [];
 let terrainChunks = new Map();
 let terrainObjects = [];
 
@@ -20,6 +21,15 @@ let playerSpeed = 0.3;
 let moveDirection = new THREE.Vector3(0, 0, 0);
 let hasGun = false;
 let lastShotTime = 0;
+
+// Mouse look state (right-click drag to look around)
+let isRightMouseDown = false;
+let lastMouseX = 0;
+let lastMouseY = 0;
+let yaw = 0; // horizontal rotation
+let pitch = -0.2; // vertical rotation (negative looks down)
+const MOUSE_SENSITIVITY = 0.005;
+const CAMERA_DISTANCE = 10;
 
 const keys = {};
 const CHUNK_SIZE = 50;
@@ -73,6 +83,36 @@ function init() {
     });
     
     document.addEventListener('click', fireGun);
+    // Right-click drag to look around
+    document.addEventListener('mousedown', (e) => {
+        if (e.button === 2) {
+            isRightMouseDown = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+        }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+        if (e.button === 2) {
+            isRightMouseDown = false;
+        }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isRightMouseDown) return;
+        const dx = e.clientX - lastMouseX;
+        const dy = e.clientY - lastMouseY;
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+        yaw -= dx * MOUSE_SENSITIVITY;
+        pitch -= dy * MOUSE_SENSITIVITY;
+        const maxPitch = Math.PI / 2 - 0.1;
+        const minPitch = -Math.PI / 2 + 0.1;
+        pitch = Math.max(minPitch, Math.min(maxPitch, pitch));
+    });
+
+    // Prevent context menu on right-click
+    document.addEventListener('contextmenu', (e) => e.preventDefault());
     
     window.addEventListener('resize', onWindowResize);
     
@@ -435,10 +475,15 @@ function updatePlayer() {
     hunger -= 0.005;
     if (hunger <= 0) health -= 0.5;
     
-    // Camera follow player
-    camera.position.x = player.position.x;
-    camera.position.z = player.position.z + 10;
-    camera.lookAt(player.position.x, 1, player.position.z);
+    // Camera follow player with yaw/pitch (supports right-click drag look)
+    const dist = CAMERA_DISTANCE;
+    const offsetX = Math.sin(yaw) * Math.cos(pitch) * dist;
+    const offsetY = Math.sin(pitch) * dist + 2; // base height + pitch offset
+    const offsetZ = Math.cos(yaw) * Math.cos(pitch) * dist;
+    camera.position.x = player.position.x + offsetX;
+    camera.position.y = player.position.y + offsetY;
+    camera.position.z = player.position.z + offsetZ;
+    camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
     
     // Update world chunks
     updateWorldChunks();
