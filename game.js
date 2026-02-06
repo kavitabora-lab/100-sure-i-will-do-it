@@ -451,12 +451,15 @@ function createPlayer() {
 }
 
 function updatePlayer() {
-    // Camera-relative movement: forward = direction away from camera on XZ plane
+    // Camera-relative movement: use camera forward projected onto XZ plane
     moveDirection.set(0, 0, 0);
 
-    // Compute forward and right vectors from yaw
-    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir); // world-space forward
+    camDir.y = 0;
+    camDir.normalize();
+    const forward = camDir;
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
 
     if (keys['w'] || keys['arrowup']) moveDirection.add(forward);
     if (keys['s'] || keys['arrowdown']) moveDirection.sub(forward);
@@ -476,9 +479,11 @@ function updatePlayer() {
         hunger -= 0.01;
     }
 
-    // Rotate player to face yaw direction (so character looks where camera drag points)
-    player.rotation.y = yaw + Math.PI;
-    
+    // Rotate player to face movement/camera direction (so character looks where camera drag points)
+    if (forward.lengthSq() > 0.0001) {
+        player.rotation.y = Math.atan2(forward.x, forward.z) + Math.PI;
+    }
+
     // Decay health and hunger
     hunger -= 0.005;
     if (hunger <= 0) health -= 0.5;
