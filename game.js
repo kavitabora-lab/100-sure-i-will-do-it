@@ -7,6 +7,7 @@ let treasures = [];
 let buildings = [];
 let bullets = [];
 let enemies = [];
+let peasants = [];
 let terrainChunks = new Map();
 let terrainObjects = [];
 
@@ -20,7 +21,15 @@ let gameRunning = true;
 let playerSpeed = 0.3;
 let moveDirection = new THREE.Vector3(0, 0, 0);
 let hasGun = false;
+let gunType = null; // 'AK47', 'MP40', 'M10'
 let lastShotTime = 0;
+
+// Gun types with different fire rates, ammo capacity
+const GUN_TYPES = {
+    AK47: { name: 'AK-47', fireRate: 80, ammo: 30, damage: 1 },
+    MP40: { name: 'MP40', fireRate: 50, ammo: 32, damage: 0.8 },
+    M10: { name: 'M1 Carbine', fireRate: 120, ammo: 15, damage: 1.2 }
+};
 
 // Mouse look state (right-click drag to look around)
 let isRightMouseDown = false;
@@ -38,6 +47,7 @@ const RENDER_DISTANCE = 3; // Chunks to render around player
 const ENEMY_SPAWN_CHANCE = 0.08;
 const RESOURCE_SPAWN_CHANCE = 0.15;
 const BUILDING_SPAWN_CHANCE = 0.05;
+const PEASANT_SPAWN_CHANCE = 0.1; // spawn peasants near buildings
 const FIRE_RATE = 100; // milliseconds between shots
 
 function init() {
@@ -294,73 +304,85 @@ function generateChunk(chunkX, chunkZ) {
         treasures.push(treasure);
     }
     
-    // Buildings
+    // Buildings (Huts)
     const buildingCount = Math.floor(seededRandom(seed + 400) * 3);
     for (let i = 0; i < buildingCount; i++) {
         if (seededRandom(seed + 400 + i) < BUILDING_SPAWN_CHANCE) {
             const buildingSeed = seed + 400 + i;
             const localX = seededRandom(buildingSeed) * CHUNK_SIZE;
             const localZ = seededRandom(buildingSeed + 1) * CHUNK_SIZE;
+            const buildingWorldX = chunkX * CHUNK_SIZE + localX;
+            const buildingWorldZ = chunkZ * CHUNK_SIZE + localZ;
             
             const buildingGroup = new THREE.Group();
             
-            // Building walls
-            const buildingWidth = seededRandom(buildingSeed + 2) * 3 + 4;
-            const buildingHeight = seededRandom(buildingSeed + 3) * 2 + 3;
+            // Hut walls (cylindrical for realistic look)
+            const hutRadius = seededRandom(buildingSeed + 2) * 1.5 + 2;
+            const hutHeight = seededRandom(buildingSeed + 3) * 1 + 2.5;
             
-            const wallGeometry = new THREE.BoxGeometry(buildingWidth, buildingHeight, buildingWidth);
-            const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x8B7355 });
+            // Use cone for walls (simpler hut shape)
+            const wallGeometry = new THREE.ConeGeometry(hutRadius, hutHeight, 8);
+            const wallMaterial = new THREE.MeshLambertMaterial({ color: 0xA0826D });
             const walls = new THREE.Mesh(wallGeometry, wallMaterial);
-            walls.position.y = buildingHeight / 2;
+            walls.position.y = hutHeight / 2;
             walls.castShadow = true;
             walls.receiveShadow = true;
             buildingGroup.add(walls);
             
-            // Roof
-            const roofGeometry = new THREE.ConeGeometry(buildingWidth * 0.7, buildingHeight * 0.5, 4);
-            const roofMaterial = new THREE.MeshLambertMaterial({ color: 0x654321 });
+            // Thatch roof (darker cone on top)
+            const roofGeometry = new THREE.ConeGeometry(hutRadius * 1.1, hutHeight * 0.4, 8);
+            const roofMaterial = new THREE.MeshLambertMaterial({ color: 0x6B5D4F });
             const roof = new THREE.Mesh(roofGeometry, roofMaterial);
-            roof.position.y = buildingHeight + buildingHeight * 0.25;
+            roof.position.y = hutHeight + hutHeight * 0.15;
             roof.castShadow = true;
             buildingGroup.add(roof);
             
             // Door
-            const doorGeometry = new THREE.BoxGeometry(0.8, 1.5, 0.2);
-            const doorMaterial = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+            const doorGeometry = new THREE.BoxGeometry(0.6, 1.2, 0.1);
+            const doorMaterial = new THREE.MeshLambertMaterial({ color: 0x3a2f25 });
             const door = new THREE.Mesh(doorGeometry, doorMaterial);
-            door.position.set(0, 0.8, buildingWidth / 2 + 0.1);
+            door.position.set(0, 0.6, hutRadius + 0.05);
             buildingGroup.add(door);
             
-            // Ammo box inside building
+            // Ammo crate inside building
             if (seededRandom(buildingSeed + 4) < 0.6) {
-                const ammoGeometry = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+                const ammoGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4);
                 const ammoMaterial = new THREE.MeshStandardMaterial({ color: 0xFFD700 });
                 const ammoBox = new THREE.Mesh(ammoGeometry, ammoMaterial);
-                ammoBox.position.y = 0.5;
+                ammoBox.position.y = 0.3;
+                ammoBox.position.z = -0.5;
                 ammoBox.isAmmo = true;
-                ammoBox.ammoAmount = 20;
+                ammoBox.ammoAmount = 25;
                 buildingGroup.add(ammoBox);
             }
             
-            // Gun box inside building
+            // Gun box inside building (with random gun type)
             if (seededRandom(buildingSeed + 5) < 0.3) {
-                const gunGeometry = new THREE.BoxGeometry(0.8, 0.3, 0.3);
-                const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+                const gunTypes = ['AK47', 'MP40', 'M10'];
+                const randomGunType = gunTypes[Math.floor(seededRandom(buildingSeed + 6) * gunTypes.length)];
+                
+                const gunGeometry = new THREE.BoxGeometry(0.6, 0.2, 0.2);
+                const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
                 const gunBox = new THREE.Mesh(gunGeometry, gunMaterial);
-                gunBox.position.y = 0.5;
-                gunBox.position.z = -1;
+                gunBox.position.y = 0.4;
+                gunBox.position.x = -0.5;
                 gunBox.isGun = true;
+                gunBox.gunType = randomGunType;
                 buildingGroup.add(gunBox);
             }
             
-            buildingGroup.position.set(
-                chunkX * CHUNK_SIZE + localX,
-                0,
-                chunkZ * CHUNK_SIZE + localZ
-            );
-            
+            buildingGroup.position.set(buildingWorldX, 0, buildingWorldZ);
             group.add(buildingGroup);
             buildings.push(buildingGroup);
+            
+            // Spawn peasants near buildings
+            for (let p = 0; p < Math.floor(seededRandom(buildingSeed + 7) * 2); p++) {
+                if (seededRandom(buildingSeed + 7 + p) < PEASANT_SPAWN_CHANCE) {
+                    const peasantOffsetX = (seededRandom(buildingSeed + 8 + p) - 0.5) * 8;
+                    const peasantOffsetZ = (seededRandom(buildingSeed + 9 + p) - 0.5) * 8;
+                    createPeasant(buildingWorldX + peasantOffsetX, buildingWorldZ + peasantOffsetZ);
+                }
+            }
         }
     }
     
@@ -450,6 +472,64 @@ function createPlayer() {
     player.velocity = new THREE.Vector3(0, 0, 0);
 }
 
+function createPeasant(x, z) {
+    const group = new THREE.Group();
+    
+    // Head (smaller than player)
+    const headGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    const headMaterial = new THREE.MeshStandardMaterial({ color: 0xd4a574 });
+    const head = new THREE.Mesh(headGeometry, headMaterial);
+    head.position.y = 1.2;
+    head.castShadow = true;
+    group.add(head);
+    
+    // Torso
+    const torsoGeometry = new THREE.BoxGeometry(0.4, 0.8, 0.3);
+    const torsoMaterial = new THREE.MeshStandardMaterial({ color: 0x8B7355 });
+    const torso = new THREE.Mesh(torsoGeometry, torsoMaterial);
+    torso.position.y = 0.6;
+    torso.castShadow = true;
+    group.add(torso);
+    
+    // Arms
+    const armGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.6, 8);
+    const armMaterial = new THREE.MeshStandardMaterial({ color: 0xd4a574 });
+    const leftArm = new THREE.Mesh(armGeometry, armMaterial);
+    leftArm.position.set(-0.3, 0.8, 0);
+    leftArm.castShadow = true;
+    group.add(leftArm);
+    
+    const rightArm = new THREE.Mesh(armGeometry, armMaterial);
+    rightArm.position.set(0.3, 0.8, 0);
+    rightArm.castShadow = true;
+    group.add(rightArm);
+    
+    // Legs
+    const legGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.6, 8);
+    const legMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3728 });
+    const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
+    leftLeg.position.set(-0.15, 0.15, 0);
+    leftLeg.castShadow = true;
+    group.add(leftLeg);
+    
+    const rightLeg = new THREE.Mesh(legGeometry, legMaterial);
+    rightLeg.position.set(0.15, 0.15, 0);
+    rightLeg.castShadow = true;
+    group.add(rightLeg);
+    
+    group.position.set(x, 0, z);
+    scene.add(group);
+    
+    // AI state
+    group.velocity = new THREE.Vector3(0, 0, 0);
+    group.direction = Math.random() * Math.PI * 2;
+    group.speed = 0.05;
+    group.wanderTimer = 0;
+    
+    peasants.push(group);
+    return group;
+}
+
 function updatePlayer() {
     // Camera-relative movement: use camera forward projected onto XZ plane
     moveDirection.set(0, 0, 0);
@@ -523,6 +603,8 @@ function updatePlayer() {
             }
             if (item.isGun && player.position.distanceTo(item.getWorldPosition(new THREE.Vector3())) < 2) {
                 hasGun = true;
+                gunType = item.gunType || 'AK47'; // default to AK47
+                ammo = GUN_TYPES[gunType].ammo; // reset ammo for new gun
                 building.remove(item);
                 item.isGun = false;
             }
@@ -576,14 +658,15 @@ function updateHUD() {
     document.getElementById('treasureCount').textContent = treasureFound;
     document.getElementById('resourceCount').textContent = resourcesCollected;
     document.getElementById('ammoCount').textContent = ammo;
-    document.getElementById('gunStatus').textContent = hasGun ? "✓ Equipped" : "✗ No Gun";
+    document.getElementById('gunStatus').textContent = hasGun ? `✓ ${GUN_TYPES[gunType].name}` : "✗ No Gun";
 }
 
 function fireGun() {
     if (!gameRunning || !hasGun || ammo <= 0) return;
     
     const now = Date.now();
-    if (now - lastShotTime < FIRE_RATE) return;
+    const fireRate = GUN_TYPES[gunType]?.fireRate || FIRE_RATE;
+    if (now - lastShotTime < fireRate) return;
     
     lastShotTime = now;
     ammo--;
@@ -651,6 +734,33 @@ function endGame() {
     document.getElementById('gameOver').style.display = 'block';
 }
 
+function updatePeasants() {
+    peasants.forEach((peasant) => {
+        // Wander behavior
+        peasant.wanderTimer--;
+        if (peasant.wanderTimer <= 0) {
+            peasant.direction += (Math.random() - 0.5) * 0.5;
+            peasant.wanderTimer = Math.floor(Math.random() * 100) + 50;
+        }
+        
+        // Move based on wandering direction
+        peasant.position.x += Math.sin(peasant.direction) * peasant.speed;
+        peasant.position.z += Math.cos(peasant.direction) * peasant.speed;
+        
+        // Rotate torso to face direction
+        peasant.rotation.y = peasant.direction;
+        
+        // Animate walking legs
+        if (peasant.children.length > 4) {
+            const leftLeg = peasant.children[3];
+            const rightLeg = peasant.children[4];
+            const walkCycle = (Date.now() * 0.003) % (2 * Math.PI);
+            if (leftLeg) leftLeg.rotation.z = Math.sin(walkCycle) * 0.3;
+            if (rightLeg) rightLeg.rotation.z = Math.sin(walkCycle + Math.PI) * 0.3;
+        }
+    });
+}
+
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -662,6 +772,7 @@ function animate() {
     
     if (gameRunning) {
         updatePlayer();
+        updatePeasants();
     }
     
     renderer.render(scene, camera);
