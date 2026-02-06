@@ -451,25 +451,33 @@ function createPlayer() {
 }
 
 function updatePlayer() {
+    // Camera-relative movement: forward = direction away from camera on XZ plane
     moveDirection.set(0, 0, 0);
-    
-    if (keys['w'] || keys['arrowup']) moveDirection.z -= 1;
-    if (keys['s'] || keys['arrowdown']) moveDirection.z += 1;
-    if (keys['a'] || keys['arrowleft']) moveDirection.x -= 1;
-    if (keys['d'] || keys['arrowright']) moveDirection.x += 1;
-    
+
+    // Compute forward and right vectors from yaw
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+
+    if (keys['w'] || keys['arrowup']) moveDirection.add(forward);
+    if (keys['s'] || keys['arrowdown']) moveDirection.sub(forward);
+    if (keys['a'] || keys['arrowleft']) moveDirection.sub(right);
+    if (keys['d'] || keys['arrowright']) moveDirection.add(right);
+
     if (moveDirection.length() > 0) {
         moveDirection.normalize();
         const newPos = player.position.clone().add(moveDirection.clone().multiplyScalar(playerSpeed));
-        
+
         // World border constraint
         const distance = Math.sqrt(newPos.x * newPos.x + newPos.z * newPos.z);
         if (distance <= WORLD_BORDER) {
             player.position.copy(newPos);
         }
-        
+
         hunger -= 0.01;
     }
+
+    // Rotate player to face yaw direction (so character looks where camera drag points)
+    player.rotation.y = yaw + Math.PI;
     
     // Decay health and hunger
     hunger -= 0.005;
