@@ -20,6 +20,12 @@ let ammo = 30;
 let gameRunning = true;
 let playerSpeed = 0.3;
 let moveDirection = new THREE.Vector3(0, 0, 0);
+let playerVerticalVelocity = 0;
+const GRAVITY = -0.03;
+const JUMP_VELOCITY = 0.7;
+let isOnGround = true;
+let jumpCount = 0;
+const MAX_JUMPS = 3;
 let hasGun = false;
 let gunType = null; // 'AK47', 'MP40', 'M10'
 let lastShotTime = 0;
@@ -38,7 +44,9 @@ let lastMouseY = 0;
 let yaw = 0; // horizontal rotation
 let pitch = -0.2; // vertical rotation (negative looks down)
 const MOUSE_SENSITIVITY = 0.005;
-const CAMERA_DISTANCE = 10;
+let CAMERA_DISTANCE = 10;
+const CAMERA_DISTANCE_MIN = 3;
+const CAMERA_DISTANCE_MAX = 30;
 
 const keys = {};
 const CHUNK_SIZE = 50;
@@ -46,11 +54,16 @@ const WORLD_BORDER = 250; // Max distance from origin
 const RENDER_DISTANCE = 3; // Chunks to render around player
 const ENEMY_SPAWN_CHANCE = 0.08;
 const RESOURCE_SPAWN_CHANCE = 0.15;
-const BUILDING_SPAWN_CHANCE = 0.05;
-const PEASANT_SPAWN_CHANCE = 0.1; // spawn peasants near buildings
+const BUILDING_SPAWN_CHANCE = 90; // 90% chance to spawn a building in a chunk
+const PEASANT_SPAWN_CHANCE = 100; // spawn peasants near buildings
 const FIRE_RATE = 100; // milliseconds between shots
 
 function init() {
+        // Mouse wheel zoom
+        document.addEventListener('wheel', (e) => {
+            CAMERA_DISTANCE += e.deltaY * 0.02;
+            CAMERA_DISTANCE = Math.max(CAMERA_DISTANCE_MIN, Math.min(CAMERA_DISTANCE_MAX, CAMERA_DISTANCE));
+        });
     // Scene setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xc2a26d);
@@ -86,8 +99,14 @@ function init() {
     // Event listeners
     document.addEventListener('keydown', (e) => {
         keys[e.key.toLowerCase()] = true;
+        // Triple jump on spacebar
+        if ((e.key === ' ' || e.code === 'Space') && jumpCount < MAX_JUMPS) {
+            playerVerticalVelocity = JUMP_VELOCITY;
+            isOnGround = false;
+            jumpCount++;
+        }
     });
-    
+
     document.addEventListener('keyup', (e) => {
         keys[e.key.toLowerCase()] = false;
     });
@@ -273,7 +292,20 @@ function generateChunk(chunkX, chunkZ) {
                 chunkZ * CHUNK_SIZE + localZ
             );
             
-            enemyGroup.health = 50;
+            enemyGroup.health = 100;
+            enemyGroup.maxHealth = 100;
+            
+            // Add health bar above enemy
+            const healthBarGeometry = new THREE.PlaneGeometry(1, 0.2);
+            const healthBarMaterial = new THREE.MeshStandardMaterial({ color: 0xFF0000 });
+            const healthBar = new THREE.Mesh(healthBarGeometry, healthBarMaterial);
+            healthBar.position.y = 2.5;
+            healthBar.position.z = 0.1;
+            healthBar.scale.x = enemyGroup.health / enemyGroup.maxHealth;
+            healthBar.userData.isHealthBar = true;
+            enemyGroup.add(healthBar);
+            enemyGroup.healthBar = healthBar;
+            
             group.add(enemyGroup);
             enemies.push(enemyGroup);
         }
@@ -546,17 +578,29 @@ function updatePlayer() {
     if (keys['a'] || keys['arrowleft']) moveDirection.sub(right);
     if (keys['d'] || keys['arrowright']) moveDirection.add(right);
 
+
     if (moveDirection.length() > 0) {
         moveDirection.normalize();
         const newPos = player.position.clone().add(moveDirection.clone().multiplyScalar(playerSpeed));
-
         // World border constraint
         const distance = Math.sqrt(newPos.x * newPos.x + newPos.z * newPos.z);
         if (distance <= WORLD_BORDER) {
-            player.position.copy(newPos);
+            player.position.x = newPos.x;
+            player.position.z = newPos.z;
         }
-
         hunger -= 0.01;
+    }
+
+    // Gravity and jumping
+    playerVerticalVelocity += GRAVITY;
+    player.position.y += playerVerticalVelocity;
+    if (player.position.y <= 0) {
+        player.position.y = 0;
+        playerVerticalVelocity = 0;
+        isOnGround = true;
+        jumpCount = 0;
+    } else {
+        isOnGround = false;
     }
 
     // Rotate player to face movement/camera direction (so character looks where camera drag points)
@@ -685,11 +729,25 @@ function fireGun() {
     direction.applyQuaternion(camera.quaternion);
     direction.normalize();
     
-    bullet.velocity = direction.multiplyScalar(1);
+    bullet.velocity = direction.clone().multiplyScalar(0.5);
     bullet.lifetime = 0;
     
     scene.add(bullet);
     bullets.push(bullet);
+    
+    // Draw yellow line showing bullet direction
+    const lineGeometry = new THREE.BufferGeometry();
+    const linePoints = [
+        bullet.position.clone(),
+        bullet.position.clone().add(direction.clone().multiplyScalar(100))
+    ];
+    lineGeometry.setFromPoints(linePoints);
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xFFFF00, linewidth: 2 });
+    const line = new THREE.Line(lineGeometry, lineMaterial);
+    scene.add(line);
+    
+    // Remove line after 200ms for visual feedback
+    setTimeout(() => scene.remove(line), 200);
     
     updateHUD();
 }
@@ -709,10 +767,20 @@ function updateBullets() {
         enemies = enemies.filter((enemy) => {
             if (bullet.position.distanceTo(enemy.position) < 1) {
                 scene.remove(bullet);
-                scene.remove(enemy);
-                ammo += 2; // Get ammo from killing enemies
-                updateHUD();
-                return false;
+                enemy.health -= GUN_TYPES[gunType]?.damage || 1;
+                
+                if (enemy.health <= 0) {
+                    scene.remove(enemy);
+                    ammo += 2; // Get ammo from killing enemies
+                    updateHUD();
+                    return false;
+                } else {
+                    // Update health bar
+                    if (enemy.healthBar) {
+                        enemy.healthBar.scale.x = Math.max(0, enemy.health / enemy.maxHealth);
+                    }
+                    return true;
+                }
             }
             return true;
         });
