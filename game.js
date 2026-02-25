@@ -785,6 +785,16 @@ function updateBullets() {
             return true;
         });
         
+        // Check collision with peasants
+        peasants = peasants.filter((peasant) => {
+            if (bullet.position.distanceTo(peasant.position) < 0.8) {
+                scene.remove(bullet);
+                scene.remove(peasant);
+                return false;
+            }
+            return true;
+        });
+        
         // Check world boundaries
         if (bullet.position.length() > WORLD_BORDER) {
             scene.remove(bullet);
