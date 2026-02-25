@@ -26,6 +26,7 @@ const JUMP_VELOCITY = 0.7;
 let isOnGround = true;
 let jumpCount = 0;
 const MAX_JUMPS = 3;
+let gunModel = null; // 3D gun model in hand
 let hasGun = false;
 let gunType = null; // 'AK47', 'MP40', 'M10'
 let lastShotTime = 0;
@@ -504,6 +505,79 @@ function createPlayer() {
     player.velocity = new THREE.Vector3(0, 0, 0);
 }
 
+function createGunModel(type) {
+    const gunGroup = new THREE.Group();
+    
+    if (type === 'AK47') {
+        // AK-47: barrel, stock, magazine
+        const barrelGeometry = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 8);
+        const barrelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
+        barrel.rotation.z = Math.PI / 2;
+        barrel.position.x = 0.6;
+        gunGroup.add(barrel);
+        
+        // Stock
+        const stockGeometry = new THREE.BoxGeometry(0.15, 0.15, 0.8);
+        const stockMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+        const stock = new THREE.Mesh(stockGeometry, stockMaterial);
+        stock.position.x = -0.4;
+        gunGroup.add(stock);
+        
+        // Magazine
+        const magGeometry = new THREE.BoxGeometry(0.12, 0.3, 0.4);
+        const magMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+        const mag = new THREE.Mesh(magGeometry, magMaterial);
+        mag.position.set(-0.1, -0.15, 0);
+        gunGroup.add(mag);
+    } else if (type === 'MP40') {
+        // MP40: compact submachine gun
+        const barrelGeometry = new THREE.CylinderGeometry(0.06, 0.06, 1.2, 8);
+        const barrelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
+        barrel.rotation.z = Math.PI / 2;
+        barrel.position.x = 0.5;
+        gunGroup.add(barrel);
+        
+        // Receiver
+        const receiverGeometry = new THREE.BoxGeometry(0.1, 0.12, 0.6);
+        const receiverMaterial = new THREE.MeshStandardMaterial({ color: 0x111111 });
+        const receiver = new THREE.Mesh(receiverGeometry, receiverMaterial);
+        gunGroup.add(receiver);
+        
+        // Stock (short)
+        const stockGeometry = new THREE.BoxGeometry(0.12, 0.12, 0.5);
+        const stockMaterial = new THREE.MeshStandardMaterial({ color: 0x666666 });
+        const stock = new THREE.Mesh(stockGeometry, stockMaterial);
+        stock.position.x = -0.35;
+        gunGroup.add(stock);
+    } else if (type === 'M10') {
+        // M1 Carbine: longer rifle
+        const barrelGeometry = new THREE.CylinderGeometry(0.07, 0.07, 1.8, 8);
+        const barrelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
+        barrel.rotation.z = Math.PI / 2;
+        barrel.position.x = 0.7;
+        gunGroup.add(barrel);
+        
+        // Wooden stock
+        const stockGeometry = new THREE.BoxGeometry(0.13, 0.13, 1);
+        const stockMaterial = new THREE.MeshStandardMaterial({ color: 0xA0826D });
+        const stock = new THREE.Mesh(stockGeometry, stockMaterial);
+        stock.position.x = -0.5;
+        gunGroup.add(stock);
+        
+        // Magazine
+        const magGeometry = new THREE.BoxGeometry(0.1, 0.25, 0.35);
+        const magMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+        const mag = new THREE.Mesh(magGeometry, magMaterial);
+        mag.position.set(-0.05, -0.12, 0);
+        gunGroup.add(mag);
+    }
+    
+    return gunGroup;
+}
+
 function createPeasant(x, z) {
     const group = new THREE.Group();
     
@@ -622,6 +696,17 @@ function updatePlayer() {
     camera.position.z = player.position.z + offsetZ;
     camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
     
+    // Update gun model orientation to point in camera direction
+    if (gunModel && hasGun) {
+        const gunDir = new THREE.Vector3();
+        camera.getWorldDirection(gunDir);
+        gunModel.lookAt(
+            player.position.x + gunDir.x,
+            player.position.y + 1 + gunDir.y,
+            player.position.z + gunDir.z
+        );
+    }
+    
     // Update world chunks
     updateWorldChunks();
     
@@ -649,6 +734,18 @@ function updatePlayer() {
                 hasGun = true;
                 gunType = item.gunType || 'AK47'; // default to AK47
                 ammo = GUN_TYPES[gunType].ammo; // reset ammo for new gun
+                
+                // Remove old gun model if exists
+                if (gunModel && gunModel.parent) {
+                    gunModel.parent.remove(gunModel);
+                }
+                
+                // Create and attach new gun model
+                gunModel = createGunModel(gunType);
+                gunModel.position.set(0.3, -0.2, -0.5); // position in hand
+                gunModel.scale.set(0.8, 0.8, 0.8);
+                player.add(gunModel);
+                
                 building.remove(item);
                 item.isGun = false;
             }
