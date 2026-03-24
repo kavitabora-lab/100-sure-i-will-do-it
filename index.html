@@ -125,10 +125,25 @@
             font-size: 48px;
             margin-bottom: 20px;
         }
+
+        /* Center crosshair for aiming */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #FFD700;
+            font-size: 30px;
+            font-weight: bold;
+            text-shadow: 0 0 6px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 20;
+        }
     </style>
 </head>
 <body>
     <div id="gameContainer"></div>
+    <div id="crosshair">+</div>
     
     <div id="hud">
         <div class="hud-item">
@@ -147,6 +162,7 @@
         <div class="hud-item">Resources: <span id="resourceCount">0</span></div>
         <div class="hud-item" style="margin-top: 15px; color: #FFD700;">Ammo: <span id="ammoCount">30</span></div>
         <div class="hud-item" style="color: #ff6b4a;">Gun: <span id="gunStatus">✗ No Gun</span></div>
+        <div class="hud-item" style="color: #D2B48C;">Weather: <span id="weatherStatus">Clear</span></div>
     </div>
     
     <div id="gameOver">
@@ -165,11 +181,50 @@
     <div id="controls">
         <div><strong>DRIED LANDS</strong></div>
         <div style="margin-top: 10px;">Arrow Keys / WASD - Move</div>
-        <div>Click - Fire Gun (if equipped)</div>
+        <div>Left-click - Fire Gun (if equipped)</div>
+        <div>Click the game window to lock cursor, then move mouse to look</div>
         <div style="margin-top: 10px; font-size: 12px;">Find buildings for guns & ammo!</div>
         <div style="font-size: 12px;">Kill enemies to get ammo!</div>
+        <div style="margin-top: 10px; font-size: 12px;">
+            <button onclick="saveGame()">Save Game</button>
+            <button onclick="loadGame()">Load Game</button>
+            <button onclick="clearSaveData()">Clear Save</button>
+        </div>
+        <div style="margin-top: 8px; font-size: 12px; color: #fff;">
+            <strong>Local port:</strong>
+            <a href="http://localhost:8000" target="_blank" style="color: #ffd700; text-decoration: underline;">http://localhost:8000</a>
+        </div>
     </div>
 
+    <script>
+        // If loaded through GitHub Codespaces app proxy, prompt for direct host access
+        if (location.hostname.includes('app.github.dev') || location.hostname.includes('github.dev')) {
+            const notice = document.createElement('div');
+            notice.style.position = 'fixed';
+            notice.style.top = '0';
+            notice.style.left = '0';
+            notice.style.right = '0';
+            notice.style.background = 'rgba(255,0,0,0.9)';
+            notice.style.color = '#fff';
+            notice.style.zIndex = '9999';
+            notice.style.padding = '12px 14px';
+            notice.style.fontFamily = 'Arial,sans-serif';
+            notice.style.fontSize = '16px';
+            notice.style.textAlign = 'center';
+            notice.innerHTML =
+                'You are on the proxy URL. For local in-container server use: ' +
+                '<a href="http://localhost:8000" target="_blank" style="color:#fff;text-decoration:underline;font-weight:bold;">http://localhost:8000</a>' +
+                ' (if this fails, open via the Developer container port preview).';
+            document.body.appendChild(notice);
+
+            // Attempt auto redirect if possible
+            setTimeout(() => {
+                if (location.href !== 'http://localhost:8000/') {
+                    window.location.href = 'http://localhost:8000/?t=' + Date.now();
+                }
+            }, 1500);
+        }
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="game.js?v=1"></script>
 </body>

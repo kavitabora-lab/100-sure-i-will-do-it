@@ -17,6 +17,16 @@ let resourcesCollected = 0;
 let treasureFound = 0;
 let ammo = 30;
 
+let gradientMap;
+
+let gameTime = 0;
+let lastTime = Date.now();
+let sun;
+let isDay = true;
+let weather = 'clear';
+let weatherTimer = 0;
+let stormDuration = 0;
+
 let gameRunning = true;
 let playerSpeed = 0.3;
 let moveDirection = new THREE.Vector3(0, 0, 0);
@@ -33,9 +43,9 @@ let lastShotTime = 0;
 
 // Gun types with different fire rates, ammo capacity
 const GUN_TYPES = {
-    AK47: { name: 'AK-47', fireRate: 80, ammo: 30, damage: 1 },
-    MP40: { name: 'MP40', fireRate: 50, ammo: 32, damage: 0.8 },
-    M10: { name: 'M1 Carbine', fireRate: 120, ammo: 15, damage: 1.2 }
+    AK47: { name: 'AK-47', fireRate: 80, ammo: 30, damage: 35 },
+    MP40: { name: 'MP40', fireRate: 50, ammo: 32, damage: 45 },
+    M10: { name: 'M1 Carbine', fireRate: 120, ammo: 15, damage: 55 }
 };
 
 // Mouse look state (right-click drag to look around)
@@ -56,19 +66,24 @@ const RENDER_DISTANCE = 3; // Chunks to render around player
 const ENEMY_SPAWN_CHANCE = 0.08;
 const RESOURCE_SPAWN_CHANCE = 0.15;
 const BUILDING_SPAWN_CHANCE = 90; // 90% chance to spawn a building in a chunk
+const WATCH_TOWER_SPAWN_CHANCE = 4.99; // 4.99% chance to spawn a watch tower in a chunk
+const OASIS_SPAWN_CHANCE = 2.00067; // 2.00067% chance to spawn an oasis in a chunk
 const PEASANT_SPAWN_CHANCE = 100; // spawn peasants near buildings
 const FIRE_RATE = 100; // milliseconds between shots
 
 function init() {
-        // Mouse wheel zoom
-        document.addEventListener('wheel', (e) => {
-            CAMERA_DISTANCE += e.deltaY * 0.02;
-            CAMERA_DISTANCE = Math.max(CAMERA_DISTANCE_MIN, Math.min(CAMERA_DISTANCE_MAX, CAMERA_DISTANCE));
-        });
+    // Disable mouse wheel zoom for strict first-person view
+    document.addEventListener('wheel', (e) => {
+        e.preventDefault();
+    }, { passive: false });
+
     // Scene setup
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xc2a26d);
-    scene.fog = new THREE.Fog(0xc2a26d, 200, 400);
+    scene.background = new THREE.Color(0x87CEEB);
+    scene.fog = new THREE.Fog(0x87CEEB, 200, 400);
+    
+    gradientMap = new THREE.DataTexture( new Uint8Array([0,0,0, 128,128,128, 255,255,255]), 3, 1, THREE.RGBFormat );
+    gradientMap.needsUpdate = true;
     
     // Camera setup
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -91,8 +106,34 @@ function init() {
     directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
     
+    // Dust particles for anime atmosphere
+    const particleCount = 500;
+    const positions = new Float32Array(particleCount * 3);
+    for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 2000;
+        positions[i * 3 + 1] = Math.random() * 100;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 2000;
+    }
+    const particleGeometry = new THREE.BufferGeometry();
+    particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({ color: 0xF5DEB3, size: 1, transparent: true, opacity: 0.6 });
+    const dustParticles = new THREE.Points(particleGeometry, particleMaterial);
+    scene.add(dustParticles);
+    
+    // Sun
+    const sunGeometry = new THREE.SphereGeometry(10, 16, 16);
+    const sunMaterial = new THREE.MeshToonMaterial({ color: 0xFFFF00, gradientMap: gradientMap });
+    sun = new THREE.Mesh(sunGeometry, sunMaterial);
+    scene.add(sun);
+    
     // Create player
     createPlayer();
+
+    // Attempt to restore progress from save data
+    loadGame();
+    
+    // Clear terrain cache to force regeneration with new building styles
+    terrainChunks.clear();
     
     // Spawn initial world
     updateWorldChunks();
@@ -113,35 +154,31 @@ function init() {
     });
     
     document.addEventListener('click', fireGun);
-    // Right-click drag to look around
-    document.addEventListener('mousedown', (e) => {
-        if (e.button === 2) {
-            isRightMouseDown = true;
-            lastMouseX = e.clientX;
-            lastMouseY = e.clientY;
+
+    // First-person look: pointer lock and mouse movement
+    const canvas = renderer.domElement;
+    canvas.addEventListener('click', () => {
+        if (document.pointerLockElement !== canvas) {
+            canvas.requestPointerLock();
         }
     });
 
-    document.addEventListener('mouseup', (e) => {
-        if (e.button === 2) {
-            isRightMouseDown = false;
+    document.addEventListener('pointerlockchange', () => {
+        if (document.pointerLockElement === canvas) {
+            // pointer locked, resume first-person look
         }
     });
 
     document.addEventListener('mousemove', (e) => {
-        if (!isRightMouseDown) return;
-        const dx = e.clientX - lastMouseX;
-        const dy = e.clientY - lastMouseY;
-        lastMouseX = e.clientX;
-        lastMouseY = e.clientY;
-        yaw -= dx * MOUSE_SENSITIVITY;
-        pitch -= dy * MOUSE_SENSITIVITY;
+        if (document.pointerLockElement !== canvas) return;
+        yaw -= e.movementX * MOUSE_SENSITIVITY;
+        pitch -= e.movementY * MOUSE_SENSITIVITY;
         const maxPitch = Math.PI / 2 - 0.1;
         const minPitch = -Math.PI / 2 + 0.1;
         pitch = Math.max(minPitch, Math.min(maxPitch, pitch));
     });
 
-    // Prevent context menu on right-click
+    // No context menu required; pointer lock bypasses right-click
     document.addEventListener('contextmenu', (e) => e.preventDefault());
     
     window.addEventListener('resize', onWindowResize);
@@ -173,7 +210,7 @@ function generateChunk(chunkX, chunkZ) {
     
     // Ground
     const groundGeometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE);
-    const groundMaterial = new THREE.MeshLambertMaterial({ color: 0xd4a574 });
+    const groundMaterial = new THREE.MeshToonMaterial({ color: 0xd4a574, gradientMap: gradientMap });
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(chunkX * CHUNK_SIZE, 0, chunkZ * CHUNK_SIZE);
@@ -183,7 +220,9 @@ function generateChunk(chunkX, chunkZ) {
     // Generate terrain features based on chunk position
     const seed = chunkX * 73856093 ^ chunkZ * 19349663;
     
-    // Hills/obstacles
+    console.log('generateChunk showing running code:', chunkX, chunkZ); // debug check
+
+    // Hills/obstacles (now box hills to make code change obvious)
     const hillCount = Math.floor(seededRandom(seed) * 5);
     for (let i = 0; i < hillCount; i++) {
         const hillSeed = seed + i * 12345;
@@ -192,8 +231,8 @@ function generateChunk(chunkX, chunkZ) {
         const size = seededRandom(hillSeed + 2) * 3 + 2;
         const height = seededRandom(hillSeed + 3) * 4 + 2;
         
-        const hillGeometry = new THREE.ConeGeometry(size, height, 16);
-        const hillMaterial = new THREE.MeshLambertMaterial({ color: 0xa0826d });
+        const hillGeometry = new THREE.BoxGeometry(size, height, size);
+        const hillMaterial = new THREE.MeshToonMaterial({ color: 0xff0000, gradientMap: gradientMap });
         const hill = new THREE.Mesh(hillGeometry, hillMaterial);
         
         hill.position.set(
@@ -217,7 +256,7 @@ function generateChunk(chunkX, chunkZ) {
             const localZ = seededRandom(resourceSeed + 1) * CHUNK_SIZE;
             
             const geometry = new THREE.BoxGeometry(0.4, 0.4, 0.4);
-            const material = new THREE.MeshStandardMaterial({ color: 0x90ee90 });
+            const material = new THREE.MeshToonMaterial({ color: 0x90ee90, gradientMap: gradientMap });
             const resource = new THREE.Mesh(geometry, material);
             
             resource.position.set(
@@ -245,7 +284,7 @@ function generateChunk(chunkX, chunkZ) {
             
             // Enemy Head
             const enemyHeadGeometry = new THREE.BoxGeometry(0.6, 0.6, 0.6);
-            const enemyHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            const enemyHeadMaterial = new THREE.MeshToonMaterial({ color: 0x333333, gradientMap: gradientMap });
             const enemyHead = new THREE.Mesh(enemyHeadGeometry, enemyHeadMaterial);
             enemyHead.position.y = 1.5;
             enemyHead.castShadow = true;
@@ -253,7 +292,7 @@ function generateChunk(chunkX, chunkZ) {
             
             // Enemy Torso
             const enemyTorsoGeometry = new THREE.BoxGeometry(0.6, 1, 0.4);
-            const enemyTorsoMaterial = new THREE.MeshStandardMaterial({ color: 0x440000 });
+            const enemyTorsoMaterial = new THREE.MeshToonMaterial({ color: 0x440000, gradientMap: gradientMap });
             const enemyTorso = new THREE.Mesh(enemyTorsoGeometry, enemyTorsoMaterial);
             enemyTorso.position.y = 0.8;
             enemyTorso.castShadow = true;
@@ -261,7 +300,7 @@ function generateChunk(chunkX, chunkZ) {
             
             // Enemy Arms
             const enemyArmGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.8, 8);
-            const enemyArmMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            const enemyArmMaterial = new THREE.MeshToonMaterial({ color: 0x333333, gradientMap: gradientMap });
             
             const enemyLeftArm = new THREE.Mesh(enemyArmGeometry, enemyArmMaterial);
             enemyLeftArm.position.set(-0.5, 1, 0);
@@ -275,7 +314,7 @@ function generateChunk(chunkX, chunkZ) {
             
             // Enemy Legs
             const enemyLegGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.8, 8);
-            const enemyLegMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
+            const enemyLegMaterial = new THREE.MeshToonMaterial({ color: 0x1a1a1a, gradientMap: gradientMap });
             
             const enemyLeftLeg = new THREE.Mesh(enemyLegGeometry, enemyLegMaterial);
             enemyLeftLeg.position.set(-0.2, 0.2, 0);
@@ -298,7 +337,7 @@ function generateChunk(chunkX, chunkZ) {
             
             // Add health bar above enemy
             const healthBarGeometry = new THREE.PlaneGeometry(1, 0.2);
-            const healthBarMaterial = new THREE.MeshStandardMaterial({ color: 0xFF0000 });
+            const healthBarMaterial = new THREE.MeshToonMaterial({ color: 0xFF0000, gradientMap: gradientMap });
             const healthBar = new THREE.Mesh(healthBarGeometry, healthBarMaterial);
             healthBar.position.y = 2.5;
             healthBar.position.z = 0.1;
@@ -319,7 +358,7 @@ function generateChunk(chunkX, chunkZ) {
         const localZ = seededRandom(treasureSeed + 1) * CHUNK_SIZE;
         
         const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const material = new THREE.MeshStandardMaterial({
+        const material = new THREE.MeshToonMaterial({
             color: 0xffd700,
             emissive: 0xffd700,
             emissiveIntensity: 0.4
@@ -349,30 +388,82 @@ function generateChunk(chunkX, chunkZ) {
             
             const buildingGroup = new THREE.Group();
             
-            // Hut walls (cylindrical for realistic look)
-            const hutRadius = seededRandom(buildingSeed + 2) * 1.5 + 2;
-            const hutHeight = seededRandom(buildingSeed + 3) * 1 + 2.5;
+            // Hut with plate-based construction like oasis
+            const wallHeight = seededRandom(buildingSeed + 3) * 1 + 2;
+            const wallThickness = 0.2;
+            const wallWidth = seededRandom(buildingSeed + 2) * 1.5 + 3;
+            const doorWidth = 1;
+            const doorHeight = 1.5;
             
-            // Use cone for walls (simpler hut shape)
-            const wallGeometry = new THREE.ConeGeometry(hutRadius, hutHeight, 8);
-            const wallMaterial = new THREE.MeshLambertMaterial({ color: 0xA0826D });
-            const walls = new THREE.Mesh(wallGeometry, wallMaterial);
-            walls.position.y = hutHeight / 2;
-            walls.castShadow = true;
-            walls.receiveShadow = true;
-            buildingGroup.add(walls);
+            // Back wall
+            const backWallGeometry = new THREE.BoxGeometry(wallWidth, wallHeight, wallThickness);
+            const wallMaterial = new THREE.MeshToonMaterial({ color: 0xA0826D, gradientMap: gradientMap });
+            const backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+            backWall.position.set(0, wallHeight / 2, -wallWidth / 2 + wallThickness / 2);
+            backWall.castShadow = true;
+            backWall.receiveShadow = true;
+            buildingGroup.add(backWall);
             
-            // Thatch roof (darker cone on top)
-            const roofGeometry = new THREE.ConeGeometry(hutRadius * 1.1, hutHeight * 0.4, 8);
-            const roofMaterial = new THREE.MeshLambertMaterial({ color: 0x6B5D4F });
+            // Left wall
+            const leftWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+            leftWall.rotation.y = Math.PI / 2;
+            leftWall.position.set(-wallWidth / 2 + wallThickness / 2, wallHeight / 2, 0);
+            leftWall.castShadow = true;
+            leftWall.receiveShadow = true;
+            buildingGroup.add(leftWall);
+            
+            // Right wall
+            const rightWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+            rightWall.rotation.y = Math.PI / 2;
+            rightWall.position.set(wallWidth / 2 - wallThickness / 2, wallHeight / 2, 0);
+            rightWall.castShadow = true;
+            rightWall.receiveShadow = true;
+            buildingGroup.add(rightWall);
+            
+            // Front wall with door opening (two plates: above door and sides)
+            // Above door
+            const aboveDoorGeometry = new THREE.BoxGeometry(wallWidth, wallHeight - doorHeight, wallThickness);
+            const aboveDoor = new THREE.Mesh(aboveDoorGeometry, wallMaterial);
+            aboveDoor.position.set(0, wallHeight - (wallHeight - doorHeight) / 2, wallWidth / 2 - wallThickness / 2);
+            aboveDoor.castShadow = true;
+            aboveDoor.receiveShadow = true;
+            buildingGroup.add(aboveDoor);
+            
+            // Left side of door
+            const sideDoorGeometry = new THREE.BoxGeometry((wallWidth - doorWidth) / 2, doorHeight, wallThickness);
+            const leftDoorSide = new THREE.Mesh(sideDoorGeometry, wallMaterial);
+            leftDoorSide.position.set(-doorWidth / 2 - (wallWidth - doorWidth) / 4, doorHeight / 2, wallWidth / 2 - wallThickness / 2);
+            leftDoorSide.castShadow = true;
+            leftDoorSide.receiveShadow = true;
+            buildingGroup.add(leftDoorSide);
+            
+            // Right side of door
+            const rightDoorSide = new THREE.Mesh(sideDoorGeometry, wallMaterial);
+            rightDoorSide.position.set(doorWidth / 2 + (wallWidth - doorWidth) / 4, doorHeight / 2, wallWidth / 2 - wallThickness / 2);
+            rightDoorSide.castShadow = true;
+            rightDoorSide.receiveShadow = true;
+            buildingGroup.add(rightDoorSide);
+            
+            // Roof plate
+            const roofGeometry = new THREE.BoxGeometry(wallWidth + 0.5, wallThickness, wallWidth + 0.5);
+            const roofMaterial = new THREE.MeshToonMaterial({ color: 0x6B5D4F, gradientMap: gradientMap });
             const roof = new THREE.Mesh(roofGeometry, roofMaterial);
-            roof.position.y = hutHeight + hutHeight * 0.15;
+            roof.position.y = wallHeight + wallThickness / 2;
             roof.castShadow = true;
+            roof.receiveShadow = true;
             buildingGroup.add(roof);
+
+            // Debug marker: make buildings unmistakable
+            const markerGeometry = new THREE.BoxGeometry(1.2, 2.8, 1.2);
+            const markerMaterial = new THREE.MeshToonMaterial({ color: 0xFF0000, emissive: 0x880000, gradientMap: gradientMap });
+            const buildingMarker = new THREE.Mesh(markerGeometry, markerMaterial);
+            buildingMarker.position.set(0, 1.4, 0);
+            buildingMarker.userData.debugMarker = true;
+            buildingGroup.add(buildingMarker);
             
             // Door
             const doorGeometry = new THREE.BoxGeometry(0.6, 1.2, 0.1);
-            const doorMaterial = new THREE.MeshLambertMaterial({ color: 0x3a2f25 });
+            const doorMaterial = new THREE.MeshToonMaterial({ color: 0x3a2f25, gradientMap: gradientMap });
             const door = new THREE.Mesh(doorGeometry, doorMaterial);
             door.position.set(0, 0.6, hutRadius + 0.05);
             buildingGroup.add(door);
@@ -380,7 +471,7 @@ function generateChunk(chunkX, chunkZ) {
             // Ammo crate inside building
             if (seededRandom(buildingSeed + 4) < 0.6) {
                 const ammoGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4);
-                const ammoMaterial = new THREE.MeshStandardMaterial({ color: 0xFFD700 });
+                const ammoMaterial = new THREE.MeshToonMaterial({ color: 0xFFD700, gradientMap: gradientMap });
                 const ammoBox = new THREE.Mesh(ammoGeometry, ammoMaterial);
                 ammoBox.position.y = 0.3;
                 ammoBox.position.z = -0.5;
@@ -395,7 +486,7 @@ function generateChunk(chunkX, chunkZ) {
                 const randomGunType = gunTypes[Math.floor(seededRandom(buildingSeed + 6) * gunTypes.length)];
                 
                 const gunGeometry = new THREE.BoxGeometry(0.6, 0.2, 0.2);
-                const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+                const gunMaterial = new THREE.MeshToonMaterial({ color: 0x222222, gradientMap: gradientMap });
                 const gunBox = new THREE.Mesh(gunGeometry, gunMaterial);
                 gunBox.position.y = 0.4;
                 gunBox.position.x = -0.5;
@@ -417,6 +508,26 @@ function generateChunk(chunkX, chunkZ) {
                 }
             }
         }
+    }
+    
+    // Watch Towers
+    if (seededRandom(seed + 500) < WATCH_TOWER_SPAWN_CHANCE / 100) {
+        const towerSeed = seed + 500;
+        const localX = seededRandom(towerSeed) * CHUNK_SIZE;
+        const localZ = seededRandom(towerSeed + 1) * CHUNK_SIZE;
+        const towerWorldX = chunkX * CHUNK_SIZE + localX;
+        const towerWorldZ = chunkZ * CHUNK_SIZE + localZ;
+        createWatchTower(towerWorldX, towerWorldZ);
+    }
+    
+    // Oasis
+    if (seededRandom(seed + 600) < OASIS_SPAWN_CHANCE / 100) {
+        const oasisSeed = seed + 600;
+        const localX = seededRandom(oasisSeed) * CHUNK_SIZE;
+        const localZ = seededRandom(oasisSeed + 1) * CHUNK_SIZE;
+        const oasisWorldX = chunkX * CHUNK_SIZE + localX;
+        const oasisWorldZ = chunkZ * CHUNK_SIZE + localZ;
+        createOasis(oasisWorldX, oasisWorldZ);
     }
     
     scene.add(group);
@@ -457,7 +568,7 @@ function createPlayer() {
     
     // Head (cube)
     const headGeometry = new THREE.BoxGeometry(0.6, 0.6, 0.6);
-    const headMaterial = new THREE.MeshStandardMaterial({ color: 0xf4a460 });
+    const headMaterial = new THREE.MeshToonMaterial({ color: 0xf4a460, gradientMap: gradientMap });
     const head = new THREE.Mesh(headGeometry, headMaterial);
     head.position.y = 1.5;
     head.castShadow = true;
@@ -465,7 +576,7 @@ function createPlayer() {
     
     // Torso (rectangular box)
     const torsoGeometry = new THREE.BoxGeometry(0.6, 1, 0.4);
-    const torsoMaterial = new THREE.MeshStandardMaterial({ color: 0xff6b4a });
+    const torsoMaterial = new THREE.MeshToonMaterial({ color: 0xff6b4a, gradientMap: gradientMap });
     const torso = new THREE.Mesh(torsoGeometry, torsoMaterial);
     torso.position.y = 0.8;
     torso.castShadow = true;
@@ -473,7 +584,7 @@ function createPlayer() {
     
     // Left Arm (cylinder)
     const armGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.8, 8);
-    const armMaterial = new THREE.MeshStandardMaterial({ color: 0xf4a460 });
+    const armMaterial = new THREE.MeshToonMaterial({ color: 0xf4a460, gradientMap: gradientMap });
     const leftArm = new THREE.Mesh(armGeometry, armMaterial);
     leftArm.position.set(-0.5, 1, 0);
     leftArm.castShadow = true;
@@ -487,7 +598,7 @@ function createPlayer() {
     
     // Left Leg (cylinder)
     const legGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.8, 8);
-    const legMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a2e });
+    const legMaterial = new THREE.MeshToonMaterial({ color: 0x1a1a2e, gradientMap: gradientMap });
     const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
     leftLeg.position.set(-0.2, 0.2, 0);
     leftLeg.castShadow = true;
@@ -502,6 +613,7 @@ function createPlayer() {
     group.position.set(0, 0, 0);
     scene.add(group);
     player = group;
+    player.visible = false; // Hide third-person body in first-person mode
     player.velocity = new THREE.Vector3(0, 0, 0);
 }
 
@@ -511,7 +623,7 @@ function createGunModel(type) {
     if (type === 'AK47') {
         // AK-47: barrel, stock, magazine
         const barrelGeometry = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 8);
-        const barrelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const barrelMaterial = new THREE.MeshToonMaterial({ color: 0x333333, gradientMap: gradientMap });
         const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
         barrel.rotation.z = Math.PI / 2;
         barrel.position.x = 0.6;
@@ -519,21 +631,21 @@ function createGunModel(type) {
         
         // Stock
         const stockGeometry = new THREE.BoxGeometry(0.15, 0.15, 0.8);
-        const stockMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+        const stockMaterial = new THREE.MeshToonMaterial({ color: 0x8B4513, gradientMap: gradientMap });
         const stock = new THREE.Mesh(stockGeometry, stockMaterial);
         stock.position.x = -0.4;
         gunGroup.add(stock);
         
         // Magazine
         const magGeometry = new THREE.BoxGeometry(0.12, 0.3, 0.4);
-        const magMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+        const magMaterial = new THREE.MeshToonMaterial({ color: 0x222222, gradientMap: gradientMap });
         const mag = new THREE.Mesh(magGeometry, magMaterial);
         mag.position.set(-0.1, -0.15, 0);
         gunGroup.add(mag);
     } else if (type === 'MP40') {
         // MP40: compact submachine gun
         const barrelGeometry = new THREE.CylinderGeometry(0.06, 0.06, 1.2, 8);
-        const barrelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const barrelMaterial = new THREE.MeshToonMaterial({ color: 0x333333, gradientMap: gradientMap });
         const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
         barrel.rotation.z = Math.PI / 2;
         barrel.position.x = 0.5;
@@ -541,20 +653,20 @@ function createGunModel(type) {
         
         // Receiver
         const receiverGeometry = new THREE.BoxGeometry(0.1, 0.12, 0.6);
-        const receiverMaterial = new THREE.MeshStandardMaterial({ color: 0x111111 });
+        const receiverMaterial = new THREE.MeshToonMaterial({ color: 0x111111, gradientMap: gradientMap });
         const receiver = new THREE.Mesh(receiverGeometry, receiverMaterial);
         gunGroup.add(receiver);
         
         // Stock (short)
         const stockGeometry = new THREE.BoxGeometry(0.12, 0.12, 0.5);
-        const stockMaterial = new THREE.MeshStandardMaterial({ color: 0x666666 });
+        const stockMaterial = new THREE.MeshToonMaterial({ color: 0x666666, gradientMap: gradientMap });
         const stock = new THREE.Mesh(stockGeometry, stockMaterial);
         stock.position.x = -0.35;
         gunGroup.add(stock);
     } else if (type === 'M10') {
         // M1 Carbine: longer rifle
         const barrelGeometry = new THREE.CylinderGeometry(0.07, 0.07, 1.8, 8);
-        const barrelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        const barrelMaterial = new THREE.MeshToonMaterial({ color: 0x333333, gradientMap: gradientMap });
         const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
         barrel.rotation.z = Math.PI / 2;
         barrel.position.x = 0.7;
@@ -562,14 +674,14 @@ function createGunModel(type) {
         
         // Wooden stock
         const stockGeometry = new THREE.BoxGeometry(0.13, 0.13, 1);
-        const stockMaterial = new THREE.MeshStandardMaterial({ color: 0xA0826D });
+        const stockMaterial = new THREE.MeshToonMaterial({ color: 0xA0826D, gradientMap: gradientMap });
         const stock = new THREE.Mesh(stockGeometry, stockMaterial);
         stock.position.x = -0.5;
         gunGroup.add(stock);
         
         // Magazine
         const magGeometry = new THREE.BoxGeometry(0.1, 0.25, 0.35);
-        const magMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+        const magMaterial = new THREE.MeshToonMaterial({ color: 0x222222, gradientMap: gradientMap });
         const mag = new THREE.Mesh(magGeometry, magMaterial);
         mag.position.set(-0.05, -0.12, 0);
         gunGroup.add(mag);
@@ -583,7 +695,7 @@ function createPeasant(x, z) {
     
     // Head (smaller than player)
     const headGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4);
-    const headMaterial = new THREE.MeshStandardMaterial({ color: 0xd4a574 });
+    const headMaterial = new THREE.MeshToonMaterial({ color: 0xd4a574, gradientMap: gradientMap });
     const head = new THREE.Mesh(headGeometry, headMaterial);
     head.position.y = 1.2;
     head.castShadow = true;
@@ -591,7 +703,7 @@ function createPeasant(x, z) {
     
     // Torso
     const torsoGeometry = new THREE.BoxGeometry(0.4, 0.8, 0.3);
-    const torsoMaterial = new THREE.MeshStandardMaterial({ color: 0x8B7355 });
+    const torsoMaterial = new THREE.MeshToonMaterial({ color: 0x8B7355, gradientMap: gradientMap });
     const torso = new THREE.Mesh(torsoGeometry, torsoMaterial);
     torso.position.y = 0.6;
     torso.castShadow = true;
@@ -599,7 +711,7 @@ function createPeasant(x, z) {
     
     // Arms
     const armGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.6, 8);
-    const armMaterial = new THREE.MeshStandardMaterial({ color: 0xd4a574 });
+    const armMaterial = new THREE.MeshToonMaterial({ color: 0xd4a574, gradientMap: gradientMap });
     const leftArm = new THREE.Mesh(armGeometry, armMaterial);
     leftArm.position.set(-0.3, 0.8, 0);
     leftArm.castShadow = true;
@@ -612,7 +724,7 @@ function createPeasant(x, z) {
     
     // Legs
     const legGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.6, 8);
-    const legMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3728 });
+    const legMaterial = new THREE.MeshToonMaterial({ color: 0x4a3728, gradientMap: gradientMap });
     const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
     leftLeg.position.set(-0.15, 0.15, 0);
     leftLeg.castShadow = true;
@@ -636,7 +748,201 @@ function createPeasant(x, z) {
     return group;
 }
 
+function createWatchTower(x, z) {
+    const group = new THREE.Group();
+    
+    // Base
+    const baseGeometry = new THREE.BoxGeometry(6, 1, 6);
+    const baseMaterial = new THREE.MeshToonMaterial({ color: 0x8B4513, gradientMap: gradientMap });
+    const base = new THREE.Mesh(baseGeometry, baseMaterial);
+    base.position.y = 0.5;
+    base.castShadow = true;
+    base.receiveShadow = true;
+    group.add(base);
+    
+    // Tower walls - make it taller like a hut but higher
+    const wallHeight = 8;
+    const wallThickness = 0.2;
+    const wallWidth = 4;
+    
+    // Back wall
+    const backWallGeometry = new THREE.BoxGeometry(wallWidth, wallHeight, wallThickness);
+    const wallMaterial = new THREE.MeshToonMaterial({ color: 0xA0522D, gradientMap: gradientMap });
+    const backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    backWall.position.set(0, wallHeight / 2 + 1, -wallWidth / 2 + wallThickness / 2);
+    backWall.castShadow = true;
+    backWall.receiveShadow = true;
+    group.add(backWall);
+    
+    // Left wall
+    const leftWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    leftWall.rotation.y = Math.PI / 2;
+    leftWall.position.set(-wallWidth / 2 + wallThickness / 2, wallHeight / 2 + 1, 0);
+    leftWall.castShadow = true;
+    leftWall.receiveShadow = true;
+    group.add(leftWall);
+    
+    // Right wall
+    const rightWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    rightWall.rotation.y = Math.PI / 2;
+    rightWall.position.set(wallWidth / 2 - wallThickness / 2, wallHeight / 2 + 1, 0);
+    rightWall.castShadow = true;
+    rightWall.receiveShadow = true;
+    group.add(rightWall);
+    
+    // Front wall
+    const frontWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    frontWall.position.set(0, wallHeight / 2 + 1, wallWidth / 2 - wallThickness / 2);
+    frontWall.castShadow = true;
+    frontWall.receiveShadow = true;
+    group.add(frontWall);
+    
+    // Roof plate
+    const roofGeometry = new THREE.BoxGeometry(wallWidth + 0.5, wallThickness, wallWidth + 0.5);
+    const roofMaterial = new THREE.MeshToonMaterial({ color: 0x6B5D4F, gradientMap: gradientMap });
+    const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+    roof.position.y = wallHeight + 1 + wallThickness / 2;
+    roof.castShadow = true;
+    roof.receiveShadow = true;
+    group.add(roof);
+    
+    // Ammo on roof
+    const ammoGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const ammoMaterial = new THREE.MeshToonMaterial({ color: 0xFFD700, gradientMap: gradientMap });
+    const ammo = new THREE.Mesh(ammoGeometry, ammoMaterial);
+    ammo.position.set(0, wallHeight + 1.5, 0);
+    ammo.isAmmo = true;
+    ammo.ammoAmount = 30; // more ammo on towers
+    group.add(ammo);
+    
+    group.position.set(x, 0, z);
+    scene.add(group);
+    buildings.push(group);
+}
+
+function createOasis(x, z) {
+    const group = new THREE.Group();
+    
+    // Water pool at bottom
+    const waterGeometry = new THREE.CylinderGeometry(10, 10, 0.5, 16);
+    const waterMaterial = new THREE.MeshToonMaterial({ color: 0x1E90FF, gradientMap: gradientMap });
+    const water = new THREE.Mesh(waterGeometry, waterMaterial);
+    water.position.y = 0.25;
+    group.add(water);
+    
+    // Grass patches
+    for (let i = 0; i < 20; i++) {
+        const grassGeometry = new THREE.PlaneGeometry(1, 1);
+        const grassMaterial = new THREE.MeshToonMaterial({ color: 0x228B22, gradientMap: gradientMap });
+        const grass = new THREE.Mesh(grassGeometry, grassMaterial);
+        grass.position.set((Math.random() - 0.5) * 20, 0.5, (Math.random() - 0.5) * 20);
+        grass.rotation.x = -Math.PI / 2;
+        group.add(grass);
+    }
+    
+    // Trees
+    for (let i = 0; i < 5; i++) {
+        const treeGroup = new THREE.Group();
+        const trunkGeometry = new THREE.CylinderGeometry(0.5, 0.5, 3, 8);
+        const trunkMaterial = new THREE.MeshToonMaterial({ color: 0x8B4513, gradientMap: gradientMap });
+        const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+        trunk.position.y = 1.5;
+        treeGroup.add(trunk);
+        
+        const leavesGeometry = new THREE.SphereGeometry(2, 8, 8);
+        const leavesMaterial = new THREE.MeshToonMaterial({ color: 0x228B22, gradientMap: gradientMap });
+        const leaves = new THREE.Mesh(leavesGeometry, leavesMaterial);
+        leaves.position.y = 3.5;
+        treeGroup.add(leaves);
+        
+        treeGroup.position.set((Math.random() - 0.5) * 15, 0, (Math.random() - 0.5) * 15);
+        group.add(treeGroup);
+    }
+    
+    // Small hut with basement
+    const wallHeight = 2;
+    const wallThickness = 0.2;
+    const wallWidth = 4;
+    const doorWidth = 1;
+    const doorHeight = 1.5;
+    
+    // Back wall
+    const backWallGeometry = new THREE.BoxGeometry(wallWidth, wallHeight, wallThickness);
+    const wallMaterial = new THREE.MeshToonMaterial({ color: 0xA0826D, gradientMap: gradientMap });
+    const backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    backWall.position.set(0, wallHeight / 2, -wallWidth / 2 + wallThickness / 2);
+    group.add(backWall);
+    
+    // Left wall
+    const leftWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    leftWall.rotation.y = Math.PI / 2;
+    leftWall.position.set(-wallWidth / 2 + wallThickness / 2, wallHeight / 2, 0);
+    group.add(leftWall);
+    
+    // Right wall
+    const rightWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    rightWall.rotation.y = Math.PI / 2;
+    rightWall.position.set(wallWidth / 2 - wallThickness / 2, wallHeight / 2, 0);
+    group.add(rightWall);
+    
+    // Front wall with door opening (two plates: above door and sides)
+    // Above door
+    const aboveDoorGeometry = new THREE.BoxGeometry(wallWidth, wallHeight - doorHeight, wallThickness);
+    const aboveDoor = new THREE.Mesh(aboveDoorGeometry, wallMaterial);
+    aboveDoor.position.set(0, wallHeight - (wallHeight - doorHeight) / 2, wallWidth / 2 - wallThickness / 2);
+    group.add(aboveDoor);
+    
+    // Left side of door
+    const sideDoorGeometry = new THREE.BoxGeometry((wallWidth - doorWidth) / 2, doorHeight, wallThickness);
+    const leftDoorSide = new THREE.Mesh(sideDoorGeometry, wallMaterial);
+    leftDoorSide.position.set(-doorWidth / 2 - (wallWidth - doorWidth) / 4, doorHeight / 2, wallWidth / 2 - wallThickness / 2);
+    group.add(leftDoorSide);
+    
+    // Right side of door
+    const rightDoorSide = new THREE.Mesh(sideDoorGeometry, wallMaterial);
+    rightDoorSide.position.set(doorWidth / 2 + (wallWidth - doorWidth) / 4, doorHeight / 2, wallWidth / 2 - wallThickness / 2);
+    group.add(rightDoorSide);
+    
+    // Roof plate
+    const roofGeometry = new THREE.BoxGeometry(wallWidth + 0.5, wallThickness, wallWidth + 0.5);
+    const roofMaterial = new THREE.MeshToonMaterial({ color: 0x6B5D4F, gradientMap: gradientMap });
+    const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+    roof.position.y = wallHeight + wallThickness / 2;
+    group.add(roof);
+    
+    // Basement
+    const basementGeometry = new THREE.BoxGeometry(5, 3, 5);
+    const basementMaterial = new THREE.MeshToonMaterial({ color: 0x654321, gradientMap: gradientMap });
+    const basement = new THREE.Mesh(basementGeometry, basementMaterial);
+    basement.position.y = -1.5;
+    group.add(basement);
+    
+    group.position.set(x, 0, z);
+    scene.add(group);
+    buildings.push(group);
+}
+
 function updatePlayer() {
+    // Sand storm effects
+    if (weather === 'sandstorm') {
+        // Occasional fling
+        if (Math.random() < 0.02) { // 2% chance per frame
+            playerVerticalVelocity += Math.random() * 0.8 + 0.3; // fling up
+            const flingAngle = Math.random() * Math.PI * 2;
+            const flingDistance = Math.random() * 5 + 2;
+            player.position.x += Math.cos(flingAngle) * flingDistance;
+            player.position.z += Math.sin(flingAngle) * flingDistance;
+        }
+        // Health damage from storm
+        if (Math.random() < 0.001) { // rare damage
+            health -= 5;
+            if (health <= 0) {
+                gameRunning = false;
+                document.getElementById('gameOver').style.display = 'block';
+            }
+        }
+    }
+    
     // Camera-relative movement: use camera forward projected onto XZ plane
     moveDirection.set(0, 0, 0);
 
@@ -656,12 +962,9 @@ function updatePlayer() {
     if (moveDirection.length() > 0) {
         moveDirection.normalize();
         const newPos = player.position.clone().add(moveDirection.clone().multiplyScalar(playerSpeed));
-        // World border constraint
-        const distance = Math.sqrt(newPos.x * newPos.x + newPos.z * newPos.z);
-        if (distance <= WORLD_BORDER) {
-            player.position.x = newPos.x;
-            player.position.z = newPos.z;
-        }
+        // Infinite world - no border constraint
+        player.position.x = newPos.x;
+        player.position.z = newPos.z;
         hunger -= 0.01;
     }
 
@@ -686,26 +989,16 @@ function updatePlayer() {
     hunger -= 0.005;
     if (hunger <= 0) health -= 0.5;
     
-    // Camera follow player with yaw/pitch (supports right-click drag look)
-    const dist = CAMERA_DISTANCE;
-    const offsetX = Math.sin(yaw) * Math.cos(pitch) * dist;
-    const offsetY = Math.sin(pitch) * dist + 2; // base height + pitch offset
-    const offsetZ = Math.cos(yaw) * Math.cos(pitch) * dist;
-    camera.position.x = player.position.x + offsetX;
-    camera.position.y = player.position.y + offsetY;
-    camera.position.z = player.position.z + offsetZ;
-    camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
-    
-    // Update gun model orientation to point in camera direction
-    if (gunModel && hasGun) {
-        const gunDir = new THREE.Vector3();
-        camera.getWorldDirection(gunDir);
-        gunModel.lookAt(
-            player.position.x + gunDir.x,
-            player.position.y + 1 + gunDir.y,
-            player.position.z + gunDir.z
-        );
-    }
+    // First-person camera matched to player position + headset height
+    camera.position.set(player.position.x, player.position.y + 1.6, player.position.z);
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+    camera.rotation.z = 0;
+
+    // Gun model now follows camera directly (child of camera), no explicit lookAt needed
+    // (if there is still an old gunModel from third-person attach, it will remain camera-locked)
+
     
     // Update world chunks
     updateWorldChunks();
@@ -742,9 +1035,9 @@ function updatePlayer() {
                 
                 // Create and attach new gun model
                 gunModel = createGunModel(gunType);
-                gunModel.position.set(0.3, -0.2, -0.5); // position in hand
+                gunModel.position.set(0.3, -0.2, -0.5); // camera-relative position in first-person view
                 gunModel.scale.set(0.8, 0.8, 0.8);
-                player.add(gunModel);
+                camera.add(gunModel);
                 
                 building.remove(item);
                 item.isGun = false;
@@ -790,6 +1083,8 @@ function updatePlayer() {
     updateHUD();
 }
 
+const SAVE_KEY = 'dried_lands_save_v1';
+
 function updateHUD() {
     const healthPercent = Math.max(0, health);
     const hungerPercent = Math.max(0, hunger);
@@ -800,6 +1095,76 @@ function updateHUD() {
     document.getElementById('resourceCount').textContent = resourcesCollected;
     document.getElementById('ammoCount').textContent = ammo;
     document.getElementById('gunStatus').textContent = hasGun ? `✓ ${GUN_TYPES[gunType].name}` : "✗ No Gun";
+    document.getElementById('weatherStatus').textContent = weather === 'sandstorm' ? 'Sand Storm' : 'Clear';
+}
+
+function saveGame() {
+    try {
+        const saveData = {
+            player: {
+                x: player.position.x,
+                y: player.position.y,
+                z: player.position.z,
+            },
+            yaw,
+            pitch,
+            health,
+            hunger,
+            resourcesCollected,
+            treasureFound,
+            ammo,
+            hasGun,
+            gunType,
+            gameRunning,
+        };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+        console.log('Game saved successfully');
+    } catch (err) {
+        console.warn('Unable to save game data:', err);
+    }
+}
+
+function loadGame() {
+    try {
+        const data = localStorage.getItem(SAVE_KEY);
+        if (!data) return false;
+        const saved = JSON.parse(data);
+        if (!saved) return false;
+
+        player.position.set(saved.player.x, saved.player.y, saved.player.z);
+        yaw = saved.yaw || 0;
+        pitch = saved.pitch || 0;
+        health = saved.health ?? 100;
+        hunger = saved.hunger ?? 100;
+        resourcesCollected = saved.resourcesCollected ?? 0;
+        treasureFound = saved.treasureFound ?? 0;
+        ammo = saved.ammo ?? 30;
+        hasGun = saved.hasGun ?? false;
+        gunType = saved.gunType || null;
+        gameRunning = saved.gameRunning !== undefined ? saved.gameRunning : true;
+
+        if (gunModel && gunModel.parent) gunModel.parent.remove(gunModel);
+        gunModel = null;
+
+        if (hasGun && gunType) {
+            gunModel = createGunModel(gunType);
+            gunModel.position.set(0.3, -0.2, -0.5);
+            gunModel.scale.set(0.8, 0.8, 0.8);
+            camera.add(gunModel);
+        }
+
+        updateHUD();
+        console.log('Game loaded from save');
+        return true;
+    } catch (err) {
+        console.warn('Unable to load saved game:', err);
+        return false;
+    }
+}
+
+function clearSaveData() {
+    localStorage.removeItem(SAVE_KEY);
+    console.log('Save data cleared');
 }
 
 function fireGun() {
@@ -814,7 +1179,7 @@ function fireGun() {
     
     // Create bullet from player position
     const bulletGeometry = new THREE.SphereGeometry(0.1, 4, 4);
-    const bulletMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFF00 });
+    const bulletMaterial = new THREE.MeshToonMaterial({ color: 0xFFFF00, gradientMap: gradientMap });
     const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
     
     bullet.position.copy(player.position);
@@ -892,8 +1257,8 @@ function updateBullets() {
             return true;
         });
         
-        // Check world boundaries
-        if (bullet.position.length() > WORLD_BORDER) {
+        // Check world boundaries (expanded for infinite world)
+        if (bullet.position.length() > 1000) {
             scene.remove(bullet);
             return false;
         }
@@ -944,6 +1309,64 @@ function onWindowResize() {
 
 function animate() {
     requestAnimationFrame(animate);
+    
+    // Update game time for day-night cycle
+    const now = Date.now();
+    const delta = (now - lastTime) / 1000;
+    lastTime = now;
+    gameTime += delta / 60; // convert to minutes
+    
+    // Weather cycle every game day (20 minutes)
+    weatherTimer += delta;
+    if (weatherTimer > 1200) { // 20 minutes = 1 game day
+        weatherTimer = 0;
+        if (Math.random() < 0.857) { // 6/7 ≈ 85.7% chance for sand storm
+            weather = 'sandstorm';
+            stormDuration = Math.random() * 60 + 120; // 2-3 minutes in seconds
+            scene.fog = new THREE.Fog(0xD2B48C, 20, 100); // sandy fog
+        } else {
+            weather = 'clear';
+            scene.fog = new THREE.Fog(isDay ? 0x87CEEB : 0x000033, isDay ? 200 : 100, isDay ? 400 : 300);
+        }
+    }
+    
+    const cycle = gameTime % 20; // 20-minute cycle: 10 day, 10 night
+    const dayTime = cycle < 10;
+    
+    if (dayTime !== isDay) {
+        isDay = dayTime;
+        if (isDay) {
+            // Day: bright sky and lights
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.Fog(0x87CEEB, 200, 400);
+            ambientLight.intensity = 0.7;
+            directionalLight.intensity = 1;
+            sun.visible = true;
+        } else {
+            // Night: dark sky and dim lights
+            scene.background = new THREE.Color(0x000033);
+            scene.fog = new THREE.Fog(0x000033, 100, 300);
+            ambientLight.intensity = 0.2;
+            directionalLight.intensity = 0.3;
+            sun.visible = false;
+        }
+    }
+    
+    if (isDay) {
+        // Move sun across the sky
+        const sunAngle = (cycle / 10) * Math.PI; // 0 to π
+        sun.position.set(Math.sin(sunAngle) * 300, Math.cos(sunAngle) * 300 + 50, 0);
+        directionalLight.position.copy(sun.position).normalize().multiplyScalar(100);
+    }
+    
+    // Storm duration countdown
+    if (weather === 'sandstorm') {
+        stormDuration -= delta;
+        if (stormDuration <= 0) {
+            weather = 'clear';
+            scene.fog = new THREE.Fog(isDay ? 0x87CEEB : 0x000033, isDay ? 200 : 100, isDay ? 400 : 300);
+        }
+    }
     
     if (gameRunning) {
         updatePlayer();
